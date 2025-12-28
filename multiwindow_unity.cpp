@@ -74,6 +74,7 @@ bool useWayland = false;
 QMap<QScreen*, QRect> screenGeometries;
 
 std::vector<CustomWindow*> allCustomWindows;
+QMutex customWindowMutex;
 std::vector<WId> waylandWindowOrder;
 
 xcb_connection_t* globalXcbConnection;
@@ -541,11 +542,15 @@ void CustomWindow::setTexture(ID3D11Resource* resource) {
     this->copyTexture();
 }
 
-void CustomWindow::copyTexture() {
-    if (!isVisible) return;
+bool CustomWindow::copyTexture() {
+    if (!isVisible) return false;
+    if (isClosing) {
+        qWarning() << "WARNING: Tried to copyTexture() when window is closing.";
+        return false;
+    }
     if (this->qtImage == nullptr) {
         qWarning() << "WARNING: Tried to copyTexture() when texture is deleted.";
-        return;
+        return false;
     }
 
     ID3D11DeviceContext* ctx = NULL;
@@ -568,6 +573,7 @@ void CustomWindow::copyTexture() {
 
     ctx->Unmap(stagingTexture, 0);
     ctx->Release();
+    return true;
 }
 
 #else
@@ -582,15 +588,20 @@ void CustomWindow::setTextureSize(int w, int h) {
     tempTexture = malloc(w * h * 4);
 }
 
-void CustomWindow::copyTexture() {
+bool CustomWindow::copyTexture() {
+    if (!isVisible) return false;
+    if (isClosing) {
+        qWarning() << "WARNING: Tried to copyTexture() when window is closing.";
+        return false;
+    }
     if (this->tempTexture == nullptr || this->qtImage == nullptr) {
         qWarning() << "WARNING: Tried to copyTexture() when texture is deleted.";
-        return;
+        return false;
     }
 
     glBindTexture(GL_TEXTURE_2D, this->glTextureId);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, tempTexture);
-    
+
     int bytesPerLine = qtImage->bytesPerLine();
     int height = qtImage->height();
     uchar* startingBits = qtImage->bits();
@@ -599,6 +610,8 @@ void CustomWindow::copyTexture() {
         int invertedY = (height - i - 1);
         memcpy(startingBits + i * bytesPerLine, source + invertedY * bytesPerLine, bytesPerLine);
     }
+
+    return true;
 }
 
 #endif
@@ -1213,15 +1226,17 @@ extern "C" WINAPI void destroy_window(HWND window) {
     if (window == MAIN_WINDOW) {
         return;
     }
+    customWindowMutex.lock();
     CustomWindow* customWindow = (CustomWindow*)window;
+    customWindow->isClosing = true;
     QMetaObject::invokeMethod(app, [customWindow]() {
-        customWindow->isClosing = true;
         if (!useWayland) {
             customWindow->setWindowOpacity(0);
         }
         customWindow->close();
         allCustomWindows.erase(std::find(allCustomWindows.begin(), allCustomWindows.end(), customWindow));
         delete customWindow;
+        customWindowMutex.unlock();
     }, Qt::QueuedConnection);
 }
 
@@ -1301,10 +1316,13 @@ extern "C" WINAPI void arrange_windows(HWND* windows, int count) {
 
 static void UNITY_INTERFACE_API render(int eventID) {
     // std::cerr << "render(" << eventID << ")" << std::endl;
+    customWindowMutex.lock();
     for (auto customWindow : allCustomWindows) {
-        customWindow->copyTexture();
-        QMetaObject::invokeMethod(customWindow, qOverload<>(&QWidget::repaint), Qt::QueuedConnection);
+        if (customWindow->copyTexture()) {
+            QMetaObject::invokeMethod(customWindow, qOverload<>(&QWidget::repaint), Qt::QueuedConnection);
+        }
     }
+    customWindowMutex.unlock();
 }
 
 extern "C" WINAPI void* get_render_event_func() {

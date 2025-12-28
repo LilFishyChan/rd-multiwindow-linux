@@ -43,12 +43,11 @@ public:
 
 #ifdef WITH_WINE
     void setTexture(ID3D11Resource* resource);
-    void copyTexture();
 #else
     void setTexture(GLuint textureId);
     void setTextureSize(int w, int h);
-    void copyTexture();
 #endif
+    bool copyTexture();
 
     void _setX11Decorations(bool hasDecorations);
     void setTargetMove(int x, int y);
