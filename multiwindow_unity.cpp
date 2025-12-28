@@ -541,6 +541,11 @@ void CustomWindow::setTexture(ID3D11Resource* resource) {
 
 void CustomWindow::copyTexture() {
     if (!isVisible) return;
+    if (this->qtImage == nullptr) {
+        qWarning() << "WARNING: Tried to copyTexture() when texture is deleted.";
+        return;
+    }
+
     ID3D11DeviceContext* ctx = NULL;
     app->device->GetImmediateContext(&ctx);
     ctx->CopyResource(stagingTexture, texture);
@@ -576,6 +581,11 @@ void CustomWindow::setTextureSize(int w, int h) {
 }
 
 void CustomWindow::copyTexture() {
+    if (this->tempTexture == nullptr || this->qtImage == nullptr) {
+        qWarning() << "WARNING: Tried to copyTexture() when texture is deleted.";
+        return;
+    }
+
     glBindTexture(GL_TEXTURE_2D, this->glTextureId);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, tempTexture);
     
@@ -786,9 +796,8 @@ void CustomWindow::closeEvent(QCloseEvent* closeEvent) {
 }
 
 CustomWindow::~CustomWindow() {
-#ifdef WITH_WINE
     SAFE_DELETE(this->qtImage);
-#else
+#ifndef WITH_WINE
     SAFE_FREE(this->tempTexture);
 #endif
 
