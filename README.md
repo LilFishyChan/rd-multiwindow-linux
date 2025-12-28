@@ -42,7 +42,7 @@ This is the version when you have "Proton Experimental" selected in the compatib
 To build, you need these packages:
 
 ```bash
-# Debian/Ubuntu based
+# Debian/Ubuntu based (if on Wine Staging, replace "libwine-dev" with wine-staging-dev)
 sudo apt install libwine-dev pkg-config qt6-base-dev libxcb1-dev git
 
 # Arch
