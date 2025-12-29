@@ -57,9 +57,9 @@ typedef char* LPSTR;
 QString kwinFile = "/tmp/multiwindow_unity_kwin.js";
 void* MAIN_WINDOW = (void*)0x12345;
 #ifdef WITH_WINE
-HWND main_window_handle;
+HWND main_window_handle = NULL;
 #else
-xcb_window_t main_window_handle;
+xcb_window_t main_window_handle = 0;
 #endif
 int main_window_x = 0;
 int main_window_y = 0;
@@ -68,6 +68,12 @@ int main_window_height = 600;
 bool createdApplication = false;
 bool appReady = false;
 bool useWayland = false;
+bool needsX11Cutoff = true;
+#ifdef WITH_WINE
+bool usingWine = true;
+#else
+bool usingWine = false;
+#endif
 // Need to use this hack instead of using actual "availableGeometry".
 // Maximizing invisible windows (ScreenSizeWindow) is a more reliable
 // method of getting the actual screen size without the taskbar.
@@ -375,9 +381,18 @@ void checkForKWinWayland() {
     useWayland = true;
 }
 
+bool doesDesktopNeedCutoff() {
+    QString sessionDesktop = qgetenv("XDG_SESSION_DESKTOP").toLower();
+    if (sessionDesktop == "i3" || sessionDesktop == "hyprland") {
+        return false;
+    }
+    return true;
+}
+
 void createApplication() {
     if (createdApplication) return;
     createdApplication = true;
+    needsX11Cutoff = doesDesktopNeedCutoff();
 #ifdef KWIN_WAYLAND
     qInfo() << "Compiled with Wayland capabilities. Checking if it is supported.";
     checkForKWinWayland();
@@ -414,8 +429,9 @@ BOOL CALLBACK findMainWindowHandleCallback(HWND hwnd, LPARAM lParam) {
     return TRUE;
 }
 
-void findMainWindowHandle() {
+bool findMainWindowHandle() {
     EnumThreadWindows(GetCurrentThreadId(), findMainWindowHandleCallback, 0);
+    return main_window_handle != NULL;
 }
 
 extern "C" BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved) {
@@ -426,7 +442,10 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved
     return TRUE;
 }
 #else
-void findMainWindowHandle() {
+bool findMainWindowHandle() {
+    if (main_window_handle != 0) {
+        return true;
+    }
     int currentPid = getpid();
 
     xcb_screen_iterator_t screens = xcb_setup_roots_iterator(xcb_get_setup(globalXcbConnection));
@@ -475,6 +494,7 @@ void findMainWindowHandle() {
     }
 
     free(reply);
+    return main_window_handle != 0;
 }
 #endif
 
@@ -682,7 +702,7 @@ void CustomWindow::updateThings() {
 finalX += primaryScreen->geometry().x();
 #endif
 
-    if (!useWayland) {
+    if (!useWayland && needsX11Cutoff) {
         if (finalX < 0 - finalWidth) {
             finalOpacity = 0;
         }
@@ -727,15 +747,15 @@ finalX += primaryScreen->geometry().x();
             int difference = finalY - bottomEdge;
             finalHeight -= difference;
         }
+    }
 
-        if (finalWidth < 5) {
-            finalOpacity = 0;
-            finalWidth = 5;
-        }
-        if (finalHeight < 5) {
-            finalOpacity = 0;
-            finalHeight = 5;
-        }
+    if (finalWidth < 5) {
+        finalOpacity = 0;
+        finalWidth = 5;
+    }
+    if (finalHeight < 5) {
+        finalOpacity = 0;
+        finalHeight = 5;
     }
 
     isVisible = finalOpacity > 0;
@@ -858,6 +878,8 @@ void setMainWindowGeometry(int x, int y, int w, int h) {
     if (w != MAIN_WINDOW_GEOMETRY_SKIP) main_window_width = w;
     if (h != MAIN_WINDOW_GEOMETRY_SKIP) main_window_height = h;
 
+    if (main_window_handle == 0) return;
+
     bool invisible = x < -1500 || y < -1500;
 
 #ifdef WITH_WINE
@@ -928,16 +950,18 @@ extern "C" WINAPI Size get_window_size(HANDLE window) {
     // std::cerr << "get_window_size(" << std::hex << window << std::dec << ")" << std::endl;
     if (window == MAIN_WINDOW) {
         Size size;
-        #ifdef WITH_WINE
-        size.width = main_window_width;
-        size.height = main_window_height;
-        #else
-        auto cookie = xcb_get_geometry(globalXcbConnection, main_window_handle);
-        auto reply = xcb_get_geometry_reply(globalXcbConnection, cookie, NULL);
-        size.width = reply->width;
-        size.height = reply->height;
-        free(reply);
-        #endif
+        if (usingWine || main_window_handle == 0) {
+            size.width = main_window_width;
+            size.height = main_window_height;
+        } else {
+            #ifndef WITH_WINE
+            auto cookie = xcb_get_geometry(globalXcbConnection, main_window_handle);
+            auto reply = xcb_get_geometry_reply(globalXcbConnection, cookie, NULL);
+            size.width = reply->width;
+            size.height = reply->height;
+            free(reply);
+            #endif
+        }
         return size;
     }
 
@@ -952,16 +976,18 @@ extern "C" WINAPI Size get_view_size(HANDLE window) {
     // std::cerr << "get_view_size(" << std::hex << window << std::dec << ")" << std::endl;
     if (window == MAIN_WINDOW) {
         Size size;
-        #ifdef WITH_WINE
-        size.width = main_window_width;
-        size.height = main_window_height;
-        #else
-        auto cookie = xcb_get_geometry(globalXcbConnection, main_window_handle);
-        auto reply = xcb_get_geometry_reply(globalXcbConnection, cookie, NULL);
-        size.width = reply->width;
-        size.height = reply->height;
-        free(reply);
-        #endif
+        if (usingWine || main_window_handle == 0) {
+            size.width = main_window_width;
+            size.height = main_window_height;
+        } else {
+            #ifndef WITH_WINE
+            auto cookie = xcb_get_geometry(globalXcbConnection, main_window_handle);
+            auto reply = xcb_get_geometry_reply(globalXcbConnection, cookie, NULL);
+            size.width = reply->width;
+            size.height = reply->height;
+            free(reply);
+            #endif
+        }
         return size;
     }
 
@@ -976,16 +1002,18 @@ extern "C" WINAPI Size get_window_position(HANDLE window) {
     // std::cerr << "get_window_position(" << std::hex << window << std::dec << ")" << std::endl;
     if (window == MAIN_WINDOW) {
         Size size;
-        #ifdef WITH_WINE
-        size.width = main_window_x;
-        size.height = main_window_y;
-        #else
-        auto cookie = xcb_get_geometry(globalXcbConnection, main_window_handle);
-        auto reply = xcb_get_geometry_reply(globalXcbConnection, cookie, NULL);
-        size.width = reply->x;
-        size.height = reply->y;
-        free(reply);
-        #endif
+        if (usingWine || main_window_handle == 0) {
+            size.width = main_window_x;
+            size.height = main_window_y;
+        } else {
+            #ifndef WITH_WINE
+            auto cookie = xcb_get_geometry(globalXcbConnection, main_window_handle);
+            auto reply = xcb_get_geometry_reply(globalXcbConnection, cookie, NULL);
+            size.width = reply->x;
+            size.height = reply->y;
+            free(reply);
+            #endif
+        }
         return size;
     }
 
@@ -1096,8 +1124,10 @@ extern "C" WINAPI const char* focus_window(HWND window) {
     std::cerr << "focus_window(" << std::hex << window << std::dec << ")" << std::endl;
     if (window == MAIN_WINDOW) {
         #ifdef WITH_WINE
-        SetForegroundWindow(main_window_handle);
-        SetActiveWindow(main_window_handle);
+        if (main_window_handle != 0) {
+            SetForegroundWindow(main_window_handle);
+            SetActiveWindow(main_window_handle);
+        }
         #endif
     }
     return createString("");
@@ -1106,6 +1136,7 @@ extern "C" WINAPI const char* focus_window(HWND window) {
 extern "C" WINAPI bool is_window_focused(HWND window) {
     // std::cerr << "is_window_focused(" << std::hex << window << std::dec << ")" << std::endl;
     if (window == MAIN_WINDOW) {
+        if (main_window_handle == 0) return false;
 #ifdef WITH_WINE
         return GetActiveWindow() == main_window_handle;
 #else
@@ -1433,7 +1464,9 @@ static void UNITY_INTERFACE_API
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces* unityInterfaces) {
     connectX11Display();
-    findMainWindowHandle();
+    if (!findMainWindowHandle()) {
+        qWarning() << "Main window handle could not be found!";
+    }
     createApplication();
     while (!appReady) usleep(100);
 
