@@ -35,13 +35,6 @@ else
     exit 1
 fi
 
-if [ $# -eq 2 ]; then
-    if [[ "$2" == "--wayland" ]]; then
-        COMPILE_ARGUMENTS="$COMPILE_ARGUMENTS -DKWIN_WAYLAND "
-        echo "Wayland enabled"
-    fi
-fi
-
 if [ $IS_WINE -eq 1 ]; then
     wineg++ -o multiwindow_unity.dll -shared multiwindow_unity.cpp multiwindow_unity.dll.spec `pkg-config Qt6Widgets Qt6DBus xcb --libs --cflags` -ld3d11 -O3 $COMPILE_ARGUMENTS
     mv multiwindow_unity.dll.so "$1/Rhythm Doctor_Data/Plugins/x86_64/multiwindow_unity.dll"
