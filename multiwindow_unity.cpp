@@ -1383,7 +1383,7 @@ void arrangeWindowsX11(HWND* windows, int count) {
         windowList.push_back((CustomWindow*)windows[i]);
     }
 
-    for (int i = 0; i < windowList.size() - 1; i++) {
+    for (size_t i = 0; i < windowList.size() - 1; i++) {
         WId configOptions[] = { windowList[i + 1]->window()->winId(), XCB_STACK_MODE_BELOW };
         xcb_configure_window(
             globalXcbConnection,
@@ -1404,7 +1404,7 @@ void arrangeWindowsKWinWayland(HWND* windows, int count) {
     }
 
     waylandWindowOrder.resize(windowList.size());
-    for (int i = 0; i < windowList.size(); i++) {
+    for (size_t i = 0; i < windowList.size(); i++) {
         waylandWindowOrder[i] = windowList[windowList.size() - i - 1]->customId;
     }
 }
