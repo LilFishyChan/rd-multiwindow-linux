@@ -6,7 +6,7 @@ set -eu
 
 QT_PATH="/usr/local/Qt-6.10.1"
 
-g++ -std=c++17 -o "steam_sniper/package/Rhythm Doctor_Data/Plugins/multiwindow_unity.so" -fPIC -shared multiwindow_unity.cpp `pkg-config xcb glew --libs --cflags` -I"$QT_PATH"/include -L"$QT_PATH/lib" -lQt6Widgets -lQt6Gui -lQt6DBus -lQt6Core -O3
+g++ -std=c++17 -o "steam_sniper/package/Rhythm Doctor_Data/Plugins/multiwindow_unity.so" -fPIC -shared multiwindow_unity.cpp `pkg-config xcb glew --libs --cflags` -I"$QT_PATH"/include -L"$QT_PATH/lib" -lQt6Widgets -lQt6Gui -lQt6DBus -lQt6Core -O3 -Wall
 
 MULTIWINDOW_PATH="steam_sniper/package"
 

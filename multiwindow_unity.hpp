@@ -1,8 +1,7 @@
 #pragma once
 
-
 class CustomWindow : public QWidget {
-public:
+  public:
     int customId;
     int targetX;
     int targetY;
@@ -63,17 +62,17 @@ public:
 };
 
 class ScreenSizeWindow : public QWidget {
-public:
+  public:
     QScreen* actualScreen;
-    
+
     void doTheStuff(QScreen* screen);
-    
+
     int resizeCount = 0;
     void resizeEvent(QResizeEvent* event) override;
 };
 
 class Hyprctl {
-public:
+  public:
     std::string socketPath;
 
     Hyprctl();
