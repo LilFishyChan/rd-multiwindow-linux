@@ -134,6 +134,11 @@ print("KWin Multiwindow Plugin")
 const mainWindow = workspace.stackingOrder.find((win) => win.pid == appPid);
 let lastOrder = "";
 const lastConstraints = [];
+const supportsConstraints = Object.getOwnPropertyNames(workspace).includes("constrain");
+
+if (!supportsConstraints) {
+    print("[WARNING] Constraints/window ordering not supported. Update KDE Plasma.")
+}
 
 function decode(caption) {
     if (!caption.endsWith("\u200B") && !caption.endsWith("\u200C")) {
@@ -200,7 +205,7 @@ workspace.windowAdded.connect((win) => {
             workspace.activeWindow = mainWindow;
         }
         const arrangementCount = msg[6];
-        if (arrangementCount > 0) {
+        if (arrangementCount > 0 && supportsConstraints) {
             const orderStr = JSON.stringify(msg.slice(6, 6 + arrangementCount + 1));
             if (orderStr != lastOrder) {
                 lastOrder = orderStr;
