@@ -689,7 +689,7 @@ void CustomWindow::setTargetSize(int w, int h) {
 
 void CustomWindow::updateThings() {
     auto primaryScreen = app->primaryScreen();
-    qreal scaling = this->devicePixelRatio();
+    qreal scaling = waylandType == WaylandType::None ? this->devicePixelRatio() : 1;
     auto primaryScreenGeometry = screenGeometries[primaryScreen];
     auto unitedScreenGeometry = screenGeometries.first();
     int smallestHeight = 999999; // KDE window constraints are buggy. Other monitors also have invisible taskbar limits.
@@ -842,7 +842,7 @@ void CustomWindow::paintEvent(QPaintEvent* paintEvent) {
         return;
     }
 
-    qreal scaling = this->devicePixelRatio();
+    qreal scaling = waylandType == WaylandType::None ? this->devicePixelRatio() : 1;
 
     painter.drawImage(QRect(
         this->cutoffX,
