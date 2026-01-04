@@ -544,7 +544,9 @@ CustomWindow::CustomWindow() {
     this->targetHeight = 1;
     this->targetOpacity = 0;
 
-    this->setFixedSize(10, 10);
+    if (waylandType != WaylandType::Hyprland) {
+        this->setFixedSize(10, 10);
+    }
 
     QPixmap* cursor = new QPixmap(1, 1);
     cursor->fill(QColor(0, 0, 0, 0));
@@ -812,13 +814,11 @@ void CustomWindow::updateThings() {
             hyprReady = true;
             hyprctl->setProp("initialtitle:" + std::to_string(customId), "no_focus", "on");
             hyprctl->setProp("initialtitle:" + std::to_string(customId), "no_anim", "on");
+            hyprctl->sendMessage("dispatch setfloating initialtitle:" + std::to_string(customId));
         }
-        this->setFixedSize(finalWidth, finalHeight);
-        if (hyprX != finalX || hyprY != finalY) {
-            hyprX = finalX;
-            hyprY = finalY;
-            hyprctl->moveWindow("initialtitle:" + std::to_string(customId), finalX, finalY);
-        }
+        hyprctl->moveWindow("initialtitle:" + std::to_string(customId), finalX, finalY);
+        hyprctl->sendMessage("dispatch resizewindowpixel exact " + std::to_string(finalWidth) + " " +
+                             std::to_string(finalHeight) + ",initialtitle:" + std::to_string(customId));
         if (finalDecorations != _lastDecorations) {
             this->_lastDecorations = finalDecorations;
             hyprctl->setProp("initialtitle:" + std::to_string(customId), "decorate", finalDecorations ? "on" : "off");
@@ -933,7 +933,11 @@ Hyprctl::Hyprctl() {
     }
 }
 
-bool Hyprctl::sendMessage(std::string message) {
+void Hyprctl::sendMessage(std::string message) {
+    std::thread([this, message] { this->sendMessageSync(message); }).detach();
+}
+
+bool Hyprctl::sendMessageSync(std::string message) {
 #ifndef WITH_WINE // TODO: Find out a way to have unix sockets work with winelib (if there is a way)
     auto sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock == -1) {
@@ -977,10 +981,10 @@ bool Hyprctl::sendMessage(std::string message) {
 }
 
 bool Hyprctl::setProp(std::string window, std::string effect, std::string argument) {
-    return sendMessage("dispatch setprop " + window + " " + effect + " " + argument);
+    return sendMessageSync("dispatch setprop " + window + " " + effect + " " + argument);
 }
 
-bool Hyprctl::moveWindow(std::string window, int x, int y) {
+void Hyprctl::moveWindow(std::string window, int x, int y) {
     return sendMessage("dispatch movewindowpixel exact " + std::to_string(x) + " " + std::to_string(y) + "," + window);
 }
 
@@ -1496,7 +1500,7 @@ void arrangeWindowsHyprland(HWND* windows, int count) {
 
     if (hasChanged) {
         for (auto win : windowList) {
-            hyprctl->sendMessage("dispatch alterzorder top,initialtitle:" + std::to_string(win->customId));
+            hyprctl->sendMessageSync("dispatch alterzorder top,initialtitle:" + std::to_string(win->customId));
         }
     }
 }

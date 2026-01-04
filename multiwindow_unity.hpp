@@ -14,8 +14,6 @@ class CustomWindow : public QWidget {
     bool isVisible = true;
     bool isClosing = false;
     bool hyprReady = false;
-    int hyprX = -1;
-    int hyprY = -1;
 
     bool _lastDecorations = true;
 
@@ -76,7 +74,8 @@ class Hyprctl {
     std::string socketPath;
 
     Hyprctl();
-    bool sendMessage(std::string message);
+    void sendMessage(std::string message);
+    bool sendMessageSync(std::string message);
     bool setProp(std::string window, std::string effect, std::string argument);
-    bool moveWindow(std::string window, int x, int y);
+    void moveWindow(std::string window, int x, int y);
 };
