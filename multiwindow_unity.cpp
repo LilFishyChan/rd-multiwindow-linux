@@ -90,6 +90,9 @@ bool usingWine = true;
 #else
 bool usingWine = false;
 #endif
+bool unsupportedDE = false;
+bool forceDisabledWayland = false;
+bool hyprlandError = false;
 // Need to use this hack instead of using actual "availableGeometry".
 // Maximizing invisible windows (ScreenSizeWindow) is a more reliable
 // method of getting the actual screen size without the taskbar.
@@ -381,16 +384,24 @@ void hookIntoDLL() {
 #endif
 
 void checkForWayland() {
-    if (qgetenv("XDG_SESSION_TYPE").toLower() != "wayland") {
-        return;
-    }
-
-    if (qgetenv("RD_DANCE_NO_WAYLAND").toLower() == "1") {
-        qInfo() << "Wayland force disabled.";
-        return;
-    }
-
     auto sessionDesktop = qgetenv("XDG_SESSION_DESKTOP").toLower();
+    bool useX11 = false;
+
+    if (qgetenv("XDG_SESSION_TYPE").toLower() != "wayland") {
+        useX11 = true;
+    } else if (qgetenv("RD_DANCE_NO_WAYLAND").toLower() == "1") {
+        useX11 = true;
+        qInfo() << "Wayland force disabled.";
+        forceDisabledWayland = true;
+    }
+
+    if (useX11) {
+        if (sessionDesktop != "kde") {
+            qWarning() << "You are using an unsupported DE/WM on X11! Bug reports may be ignored.";
+            unsupportedDE = true;
+        }
+        return;
+    }
 
     if (sessionDesktop == "kde") {
         waylandType = WaylandType::KDE;
@@ -399,7 +410,8 @@ void checkForWayland() {
         waylandType = WaylandType::Hyprland;
 #endif
     } else {
-        qWarning() << "You are using an unsupported Wayland DE/WM! Bug reports may be ignored.";
+        qWarning() << "You are using an unsupported DE/WM on Wayland! Bug reports may be ignored.";
+        unsupportedDE = true;
     }
 }
 
@@ -906,13 +918,18 @@ void ScreenSizeWindow::resizeEvent(QResizeEvent* event) {
 
 // ---- Start of Hyprctl ----
 Hyprctl::Hyprctl() {
-    socketPath =
-        "/run/user/" + std::to_string(getuid()) + "/hypr/" + getenv("HYPRLAND_INSTANCE_SIGNATURE") + "/.socket.sock";
+    const char* instance = getenv("HYPRLAND_INSTANCE_SIGNATURE");
+    if (instance == nullptr) {
+        instance = "";
+    }
+
+    socketPath = "/run/user/" + std::to_string(getuid()) + "/hypr/" + instance + "/.socket.sock";
     if (access(socketPath.c_str(), 0) != 0) {
         qCritical() << "Hyprland socket does not exist at" << socketPath;
         qWarning() << "Falling back to X11";
         waylandType = WaylandType::None;
         qputenv("QT_QPA_PLATFORM", "xcb");
+        hyprlandError = true;
     }
 }
 
@@ -1558,6 +1575,34 @@ extern "C" NativeMonitors get_monitors() {
         monitors.monitors[i] = {geometry.x(), geometry.y(), geometry.width(), geometry.height(), 100};
     }
     return monitors;
+}
+
+extern "C" const char* get_info() {
+    std::string info = "Changing will require restarting the level/game.";
+    info += "\n\n---- Linux Info ----\n";
+    if (waylandType == WaylandType::None) {
+        info += "Using X11\n";
+    } else if (waylandType == WaylandType::KDE) {
+        info += "Using Wayland KDE\n";
+    } else if (waylandType == WaylandType::Hyprland) {
+        info += "Using Wayland Hyprland\n";
+    }
+
+    if (unsupportedDE) {
+        info += "<color=red>Using unsupported DE/WM.</color>\n";
+    } else if (waylandType != WaylandType::None) {
+        info += "<color=green>You are using a supported DE/WM</color>\n";
+    }
+
+    if (forceDisabledWayland) {
+        info += "<color=blue>You have force disabled Wayland.</color>\n";
+    }
+
+    if (hyprlandError) {
+        info += "<color=red>Hyprland socket not found. Try launching the game outside of Steam.</color>\n";
+    }
+
+    return createString(info.c_str());
 }
 #endif
 

@@ -47,6 +47,18 @@ public class Patches
         return false;
     }
 
+    [HarmonyPatch(typeof(RDString), "Get")]
+    [HarmonyPrefix]
+    public static bool Get(ref string __result, string key)
+    {
+        if (key == "pauseMenu.levelDetail.WindowMovement")
+        {
+            __result = Native.GetInfo();
+            return false;
+        }
+        return true;
+    }
+
     [HarmonyPatch(typeof(RDStartup), "LoadPlatformHelpers")]
     [HarmonyPrefix]
     public static bool PauseMenuDataInitialize()

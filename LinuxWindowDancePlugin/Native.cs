@@ -11,4 +11,7 @@ public class Native
 
     [DllImport("multiwindow_unity", EntryPoint = "get_monitors")]
     public static extern NativeMonitors GetMonitors();
+
+    [DllImport("multiwindow_unity", EntryPoint = "get_info")]
+    public static extern string GetInfo();
 }
