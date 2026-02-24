@@ -90,3 +90,45 @@ Put the distro you are using and desktop environment in your issue report.
 Make sure to launch the game in the terminal. Provide the logs (not Player.log, but you can provide that too if you want) in a new GitHub issue.
 
 If using the Wayland version, make sure to open `journalctl -ef` before launching the game, then provide the logs from there too.
+
+## Development
+
+> [!NOTE]
+> This section is only if you want to **edit** the code, not if you want to run it.
+
+You need some things installed:
+
+- .NET SDK for BepInEx. Arch: `dotnet-sdk` Fedora: `dotnet-sdk-10.0`
+- Build packages: Arch: `pkgconf qt6-base libxcb` Fedora: `qt6-qtbase-devel glew-devel`
+- The VS Code extensions clangd and C# Dev Kit
+- *Docker (optional, only if you want to build Steam-sandbox-compatible files)*
+
+To build the BepInEx plugin itself (the .dll):
+
+```bash
+cd LinuxWindowDancePlugin
+# You will need to have Rhythm Doctor installed in Steam for this to work
+dotnet build
+```
+
+The DLL will be at `LinuxWindowDancePlugin/bin/Debug/netstandard2.1/LinuxWindowDancePlugin.dll`. You can symlink your plugin in the game folder to that newly built DLL.
+
+Then if you want to build the Linux `.so` file:
+
+```bash
+./build.sh "/path/to/steamapps/common/Rhythm Doctor"
+```
+
+### Steam Runtime Sniper Build
+
+If you want to build a version that works inside the Steam Sniper sandbox, you will need Docker (or any compatible software, like Podman).
+
+```bash
+# Download image and compile Qt6
+./steam_sniper/prepare.sh
+
+# Create the Steam Runtime Sniper ZIP file
+./steam_sniper/build.sh
+```
+
+You can then extract the ZIP file on top of your game directory.
