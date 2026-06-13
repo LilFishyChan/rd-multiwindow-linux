@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <iostream>
 typedef void* HANDLE;
 typedef void* HWND;
@@ -49,6 +50,7 @@ typedef char* LPSTR;
 #include <bitset>
 #include <unistd.h>
 #include <thread>
+#include <chrono>
 #include <xcb/xcb.h>
 #include "multiwindow_unity.hpp"
 
@@ -105,6 +107,7 @@ std::vector<WId> storedWindowOrder;
 
 xcb_connection_t* globalXcbConnection;
 Hyprctl* hyprctl = nullptr;
+std::string mainWindowHyprAddress; // resolved from j/clients on first use
 
 std::string boolToStr(bool value) { return value ? "true" : "false"; }
 
@@ -541,6 +544,7 @@ struct MotifWmHints {
 // ---- Start of CustomWindow ----
 
 CustomWindow::CustomWindow() {
+    setAttribute(Qt::WA_NativeWindow);       // force native window surface so Hyprland can see it
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowFlag(Qt::WindowStaysOnTopHint); // Does not work on Wayland, have to use JS hack above.
     setWindowFlag(Qt::WindowDoesNotAcceptFocus);
@@ -816,21 +820,21 @@ void CustomWindow::updateThings() {
         }
         this->setWindowTitle(targetTitle + QString::fromStdString(encoded));
     } else if (waylandType == WaylandType::Hyprland) {
+        if (hyprAddress.empty()) return;
         if (!hyprReady) {
-            if (!hyprctl->setProp("initialtitle:" + std::to_string(customId), "no_blur", "on")) {
+            if (!hyprctl->setProp(hyprAddress, "no_blur", "true")) {
+                qWarning() << "[window" << customId << "] init failed at no_blur";
                 return;
             }
             hyprReady = true;
-            hyprctl->setProp("initialtitle:" + std::to_string(customId), "no_focus", "on");
-            hyprctl->setProp("initialtitle:" + std::to_string(customId), "no_anim", "on");
-            hyprctl->sendMessage("dispatch setfloating initialtitle:" + std::to_string(customId));
+            hyprctl->setProp(hyprAddress, "no_focus", "true");
+            hyprctl->setProp(hyprAddress, "no_anim", "true");
+            hyprctl->floatWindow(hyprAddress);
         }
-        hyprctl->moveWindow("initialtitle:" + std::to_string(customId), finalX, finalY);
-        hyprctl->sendMessage("dispatch resizewindowpixel exact " + std::to_string(finalWidth) + " " +
-                             std::to_string(finalHeight) + ",initialtitle:" + std::to_string(customId));
+        hyprctl->moveAndResize(hyprAddress, finalX, finalY, finalWidth, finalHeight);
         if (finalDecorations != _lastDecorations) {
             this->_lastDecorations = finalDecorations;
-            hyprctl->setProp("initialtitle:" + std::to_string(customId), "decorate", finalDecorations ? "on" : "off");
+            hyprctl->setProp(hyprAddress, "decorate", finalDecorations ? "true" : "false");
         }
         this->setWindowTitle(targetTitle);
     } else {
@@ -939,7 +943,36 @@ Hyprctl::Hyprctl() {
         waylandType = WaylandType::None;
         qputenv("QT_QPA_PLATFORM", "xcb");
         hyprlandError = true;
+        return;
     }
+
+    // Detect Hyprland version to decide old vs new dispatch syntax.
+    // Hyprland 0.55+ uses Lua-based dispatchers; older versions use hyprlang.
+    std::string versionStr;
+#ifdef WITH_WINE
+    useNewSyntax = true; // Wine path cannot spawn hyprctl anyway; assume new.
+#else
+    FILE* pipe = popen("hyprctl version 2>/dev/null", "r");
+    if (pipe != nullptr) {
+        char buffer[256];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            versionStr = buffer;
+        }
+        pclose(pipe);
+    }
+    if (!versionStr.empty()) {
+        // Parse "Hyprland X.Y.Z ..."
+        int major = 0, minor = 0;
+        if (sscanf(versionStr.c_str(), "Hyprland %d.%d", &major, &minor) >= 2) {
+            useNewSyntax = (major > 0 || (major == 0 && minor >= 55));
+        } else {
+            qWarning() << "Could not parse Hyprland version from:" << versionStr.c_str()
+                       << "- assuming new Lua syntax";
+        }
+    } else {
+        qWarning() << "Could not detect Hyprland version (hyprctl not found) - assuming new Lua syntax";
+    }
+#endif
 }
 
 void Hyprctl::sendMessage(std::string message) {
@@ -980,9 +1013,13 @@ bool Hyprctl::sendMessageSync(std::string message) {
     }
     std::string reply = std::string(buffer, written);
     if (reply != "ok") {
-        qCritical() << reply;
-        close(sock);
-        return false;
+        if (reply.rfind("warning:", 0) == 0) {
+            qWarning() << "[hyprctl]" << reply.c_str();
+        } else {
+            qCritical() << reply;
+            close(sock);
+            return false;
+        }
     }
     close(sock);
 #endif
@@ -990,11 +1027,89 @@ bool Hyprctl::sendMessageSync(std::string message) {
 }
 
 bool Hyprctl::setProp(std::string window, std::string effect, std::string argument) {
-    return sendMessageSync("dispatch setprop " + window + " " + effect + " " + argument);
+    if (useNewSyntax) {
+        return sendMessageSync("dispatch hl.dsp.window.set_prop({ prop = \"" + effect + "\", value = \"" + argument +
+                               "\", window = \"" + window + "\" })");
+    } else {
+        return sendMessageSync("dispatch setprop " + window + " " + effect + " " + argument);
+    }
 }
 
-void Hyprctl::moveWindow(std::string window, int x, int y) {
-    return sendMessage("dispatch movewindowpixel exact " + std::to_string(x) + " " + std::to_string(y) + "," + window);
+void Hyprctl::floatWindow(std::string window) {
+    if (useNewSyntax) {
+        if (!sendMessageSync("dispatch hl.dsp.window.float({ window = \"" + window + "\" })")) {
+            qWarning() << "[hyprctl] floatWindow failed for" << window.c_str();
+        }
+    } else {
+        sendMessage("dispatch setfloating " + window);
+    }
+}
+
+void Hyprctl::resizeWindow(std::string window, int w, int h) {
+    if (useNewSyntax) {
+        sendMessage("dispatch hl.dsp.window.resize({ x = " + std::to_string(w) + ", y = " + std::to_string(h) +
+                    ", window = \"" + window + "\" })");
+    } else {
+        sendMessage("dispatch resizewindowpixel exact " + std::to_string(w) + " " + std::to_string(h) + "," + window);
+    }
+}
+
+void Hyprctl::moveAndResize(std::string window, int x, int y, int w, int h) {
+    // Send move+resize in one background thread to halve thread spawns
+    std::thread([this, window, x, y, w, h]() {
+        if (useNewSyntax) {
+            sendMessageSync("dispatch hl.dsp.window.move({ x = " + std::to_string(x) + ", y = " + std::to_string(y) +
+                            ", window = \"" + window + "\" })");
+            sendMessageSync("dispatch hl.dsp.window.resize({ x = " + std::to_string(w) + ", y = " + std::to_string(h) +
+                            ", window = \"" + window + "\" })");
+        } else {
+            sendMessageSync("dispatch movewindowpixel exact " + std::to_string(x) + " " + std::to_string(y) + "," +
+                            window);
+            sendMessageSync("dispatch resizewindowpixel exact " + std::to_string(w) + " " + std::to_string(h) + "," +
+                            window);
+        }
+    }).detach();
+}
+
+bool Hyprctl::alterZorder(std::string mode, std::string window) {
+    if (useNewSyntax) {
+        return sendMessageSync("dispatch hl.dsp.window.alter_zorder({ mode = \"" + mode + "\", window = \"" + window +
+                               "\" })");
+    } else {
+        return sendMessageSync("dispatch alterzorder " + mode + "," + window);
+    }
+}
+
+std::string Hyprctl::querySync(std::string message) {
+    std::string reply;
+#ifndef WITH_WINE
+    auto sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock == -1) {
+        return "";
+    }
+    sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == -1) {
+        close(sock);
+        return "";
+    }
+    const char* data = message.c_str();
+    if (write(sock, data, strlen(data)) == -1) {
+        close(sock);
+        return "";
+    }
+    // Loop read to handle large responses that span multiple TCP frames
+    constexpr size_t chunkSize = 8192;
+    char chunk[chunkSize];
+    ssize_t n;
+    while ((n = read(sock, chunk, chunkSize)) > 0) {
+        reply.append(chunk, n);
+        if (n < (ssize_t)chunkSize) break; // partial read = done
+    }
+    close(sock);
+#endif
+    return reply;
 }
 
 // ---- End of Hyprctl ----
@@ -1033,12 +1148,60 @@ void setMainWindowGeometry(int x, int y, int w, int h) {
     SetWindowPos(main_window_handle, NULL, main_window_x, main_window_y, main_window_width, main_window_height, 0);
 #else
     if (waylandType == WaylandType::Hyprland) {
+        // Resolve main window address asynchronously (exclude child windows with RD_CHILD in title)
+        static bool mainResolved = false;
+        if (!mainResolved) {
+            mainResolved = true;
+            std::thread([]() {
+                for (int attempt = 0; attempt < 40; attempt++) {
+                    if (attempt > 0) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    std::string json = hyprctl->querySync("j/clients");
+                    if (json.empty()) continue;
+                    std::string searchClass = "\"class\": \"Rhythm Doctor\"";
+                    size_t pos = json.find(searchClass);
+                    while (pos != std::string::npos) {
+                        size_t checkEnd = json.find("}", pos);
+                        if (checkEnd == std::string::npos) break;
+                        std::string region = json.substr(pos, checkEnd - pos + 1);
+                        if (region.find("RD_CHILD") == std::string::npos) {
+                            size_t addrPos = json.rfind("\"address\": \"", pos);
+                            if (addrPos != std::string::npos) {
+                                addrPos += 12;
+                                size_t addrEnd = json.find("\"", addrPos);
+                                mainWindowHyprAddress = "address:" + json.substr(addrPos, addrEnd - addrPos);
+                                return;
+                            }
+                        }
+                        pos = json.find(searchClass, pos + 1);
+                    }
+                }
+                qWarning() << "[main window] could not resolve Hyprland address";
+            }).detach();
+        }
+        if (mainWindowHyprAddress.empty()) return;
+
+        static bool mainInited = false;
+        if (!mainInited) {
+            mainInited = true;
+            hyprctl->setProp(mainWindowHyprAddress, "no_blur", "true");
+            hyprctl->setProp(mainWindowHyprAddress, "no_anim", "true");
+        }
         if (invisible) {
-            hyprctl->setProp("initialtitle:Rhythm.Doctor", "opacity", "0");
-            hyprctl->setProp("initialtitle:Rhythm.Doctor", "no_blur", "1");
+            hyprctl->resizeWindow(mainWindowHyprAddress, 0, 0);
+            hyprctl->setProp(mainWindowHyprAddress, "opacity", "0.0001");
         } else {
-            hyprctl->setProp("initialtitle:Rhythm.Doctor", "opacity", "1");
-            hyprctl->moveWindow("initialtitle:Rhythm.Doctor", x, y);
+            hyprctl->setProp(mainWindowHyprAddress, "opacity", "1");
+            if (hyprctl->useNewSyntax) {
+                hyprctl->sendMessageSync(
+                    "dispatch hl.dsp.window.fullscreen({ mode = 1, window = \""
+                    + mainWindowHyprAddress + "\" })");
+                hyprctl->sendMessageSync(
+                    "dispatch hl.dsp.focus({ window = \""
+                    + mainWindowHyprAddress + "\" })");
+            } else {
+                hyprctl->moveAndResize(mainWindowHyprAddress, main_window_x, main_window_y,
+                                       main_window_width, main_window_height);
+            }
         }
     } else {
         if (main_window_handle == 0) {
@@ -1248,12 +1411,44 @@ extern "C" WINAPI FFIResult new_window(LPSTR title, int x, int y, int w, int h, 
             customWindow->targetTitle = title;
             customWindow->setTargetMove(x, y);
             customWindow->setTargetSize(w, h);
-            customWindow->updateThings();
             if (waylandType == WaylandType::Hyprland) {
-                customWindow->setWindowTitle(QString::number(customWindow->customId));
+                // Async poll j/clients until window appears, then init
+                customWindow->setWindowTitle(QString("RD_CHILD_%1").arg(customWindow->customId));
+                allCustomWindows.push_back(customWindow);
+                customWindow->show();
+                QCoreApplication::processEvents();
+
+                std::string needle = "RD_CHILD_" + std::to_string(customWindow->customId);
+                int cid = customWindow->customId;
+                std::thread([customWindow, needle, cid]() {
+                    std::string addr;
+                    for (int i = 0; i < 100; i++) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        std::string json = hyprctl->querySync("j/clients");
+                        size_t pos = json.find(needle);
+                        if (pos != std::string::npos) {
+                            size_t addrPos = json.rfind("\"address\": \"", pos);
+                            if (addrPos != std::string::npos) {
+                                addrPos += 12;
+                                size_t addrEnd = json.find("\"", addrPos);
+                                addr = json.substr(addrPos, addrEnd - addrPos);
+                            }
+                            break;
+                        }
+                    }
+                    if (addr.empty()) {
+                        qWarning() << "[window" << cid << "] could not resolve Hyprland address";
+                        return;
+                    }
+                    customWindow->hyprAddress = "address:" + addr;
+                    QMetaObject::invokeMethod(customWindow, [customWindow]() { customWindow->updateThings(); },
+                                              Qt::QueuedConnection);
+                }).detach();
+            } else {
+                customWindow->updateThings();
+                allCustomWindows.push_back(customWindow);
+                customWindow->show();
             }
-            allCustomWindows.push_back(customWindow);
-            customWindow->show();
         },
         Qt::BlockingQueuedConnection);
 
@@ -1529,7 +1724,9 @@ void arrangeWindowsHyprland(HWND* windows, int count) {
 
     if (hasChanged) {
         for (auto win : windowList) {
-            hyprctl->sendMessageSync("dispatch alterzorder top,initialtitle:" + std::to_string(win->customId));
+            if (!win->hyprAddress.empty()) {
+                hyprctl->alterZorder("top", win->hyprAddress);
+            }
         }
     }
 }
