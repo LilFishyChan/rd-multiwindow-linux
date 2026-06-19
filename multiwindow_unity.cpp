@@ -1187,20 +1187,17 @@ void setMainWindowGeometry(int x, int y, int w, int h) {
             hyprctl->setProp(mainWindowHyprAddress, "no_anim", "true");
         }
         if (invisible) {
-            hyprctl->resizeWindow(mainWindowHyprAddress, 0, 0);
+            hyprctl->moveAndResize(mainWindowHyprAddress, 0, 0, 0, 0);
             hyprctl->setProp(mainWindowHyprAddress, "opacity", "0.0001");
         } else {
             hyprctl->setProp(mainWindowHyprAddress, "opacity", "1");
             if (hyprctl->useNewSyntax) {
                 hyprctl->sendMessageSync(
-                    "dispatch hl.dsp.window.fullscreen({ mode = 1, window = \""
-                    + mainWindowHyprAddress + "\" })");
-                hyprctl->sendMessageSync(
                     "dispatch hl.dsp.focus({ window = \""
                     + mainWindowHyprAddress + "\" })");
             } else {
-                hyprctl->moveAndResize(mainWindowHyprAddress, main_window_x, main_window_y,
-                                       main_window_width, main_window_height);
+                hyprctl->sendMessageSync(
+                    "dispatch focuswindow " + mainWindowHyprAddress);
             }
         }
     } else {
